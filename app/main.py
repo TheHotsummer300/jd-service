@@ -2,12 +2,15 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from loguru import logger
 
 import app.business.ecommerce  # noqa: F401  # 触发电商意图注册（装配点）
 from app.api.router import api_router, register_exception_handlers
 from app.config import Settings
+from app.core.exceptions import AppError
 from app.core.logging import setup_logging
 
 
@@ -31,6 +34,16 @@ app.add_middleware(
 
 app.include_router(api_router)
 register_exception_handlers(app)
+
+
+@app.exception_handler(AppError)
+async def _app_error(request: Request, exc: AppError) -> JSONResponse:
+    """应用异常兜底：未单独注册子类的 AppError 统一返回 500 信封并记录日志。"""
+    logger.opt(exception=exc).error("未处理的应用异常")
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "data": None, "error": "服务内部错误", "meta": None},
+    )
 
 
 @app.get("/healthz")
