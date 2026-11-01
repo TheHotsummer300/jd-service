@@ -36,4 +36,15 @@ describe('UserEntryView', () => {
     expect(api.listSessions).toHaveBeenCalledWith('1001')
     expect(useChatStore().userId).toBe('1001')
   })
+
+  it('进入失败时展示错误提示并回滚 userId', async () => {
+    vi.mocked(api.listSessions).mockRejectedValue(new Error('boom'))
+
+    const wrapper = mount(UserEntryView)
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('进入失败')
+    expect(useChatStore().userId).toBeNull()
+  })
 })

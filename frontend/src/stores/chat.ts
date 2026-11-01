@@ -18,10 +18,18 @@ export const useChatStore = defineStore('chat', () => {
   const loading = ref(false)
   const sending = ref(false)
 
-  /** 进入聊天：设置 userId 并拉取会话列表。 */
+  // 消息加载请求序号：丢弃过期响应，避免慢响应覆盖当前会话
+  let loadSeq = 0
+
+  /** 进入聊天：设置 userId 并拉取会话列表；失败回滚 userId 并抛出。 */
   async function enter(id: string): Promise<void> {
     userId.value = id
-    await loadSessions()
+    try {
+      await loadSessions()
+    } catch (e) {
+      userId.value = null
+      throw e
+    }
   }
 
   /** 拉取当前用户的会话列表。 */
@@ -44,14 +52,19 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
   }
 
-  /** 选中会话并加载其消息。 */
+  /** 选中会话并加载其消息；丢弃过期的慢响应。 */
   async function selectSession(id: string): Promise<void> {
     currentSessionId.value = id
+    messages.value = []
+    const seq = ++loadSeq
     loading.value = true
     try {
-      messages.value = await api.listMessages(id)
+      const loaded = await api.listMessages(id)
+      if (seq === loadSeq && currentSessionId.value === id) {
+        messages.value = loaded
+      }
     } finally {
-      loading.value = false
+      if (seq === loadSeq) loading.value = false
     }
   }
 
@@ -73,6 +86,8 @@ export const useChatStore = defineStore('chat', () => {
     sending.value = true
     try {
       const reply = await api.sendMessage(sessionId, content)
+      // 响应返回时若已切换到其它会话，则丢弃该回复（避免串到错误会话）
+      if (currentSessionId.value !== sessionId) return
       const assistantMessage: Message = {
         id: nextTempId('assistant'),
         session_id: reply.session_id,
@@ -84,8 +99,10 @@ export const useChatStore = defineStore('chat', () => {
       }
       messages.value = [...messages.value, assistantMessage]
     } catch (e) {
-      // 失败回滚乐观 user 消息，并向上抛出以提示
-      messages.value = messages.value.filter((m) => m.id !== tempId)
+      // 仅当仍在原会话时回滚乐观消息；否则 messages 已被切换会话替换
+      if (currentSessionId.value === sessionId) {
+        messages.value = messages.value.filter((m) => m.id !== tempId)
+      }
       throw e
     } finally {
       sending.value = false

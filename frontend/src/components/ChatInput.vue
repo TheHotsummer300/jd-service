@@ -18,8 +18,9 @@ async function send(): Promise<void> {
   }
 }
 
-/** Enter 发送，Shift+Enter 换行。 */
+/** Enter 发送，Shift+Enter 换行；输入法组合期间不触发发送。 */
 function onKeydown(e: KeyboardEvent): void {
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     void send()

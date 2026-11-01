@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api/chat'
+import type { ChatResponse, Message } from '../types/chat'
 import { useChatStore } from './chat'
 
 vi.mock('../api/chat', () => ({
@@ -17,6 +18,14 @@ const session = (id: string) => ({
   title: '新会话',
   created_at: '2026-01-01T00:00:00',
   updated_at: '2026-01-01T00:00:00',
+})
+
+const message = (id: string, sessionId: string): Message => ({
+  id,
+  session_id: sessionId,
+  role: 'user',
+  content: 'hi',
+  created_at: '2026-01-01T00:00:00',
 })
 
 describe('useChatStore', () => {
@@ -89,6 +98,57 @@ describe('useChatStore', () => {
     store.currentSessionId = 's1'
 
     await expect(store.sendMessage('查订单')).rejects.toThrow('boom')
+    expect(store.messages).toHaveLength(0)
+  })
+
+  it('enter 拉取会话失败时回滚 userId 并抛错', async () => {
+    vi.mocked(api.listSessions).mockRejectedValue(new Error('boom'))
+
+    const store = useChatStore()
+    await expect(store.enter('1001')).rejects.toThrow('boom')
+    expect(store.userId).toBeNull()
+  })
+
+  it('selectSession 丢弃过期的慢响应，避免串到错误会话', async () => {
+    let resolveA!: (v: Message[]) => void
+    let resolveB!: (v: Message[]) => void
+    vi.mocked(api.listMessages)
+      .mockImplementationOnce(() => new Promise((r) => { resolveA = r }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveB = r }))
+
+    const store = useChatStore()
+    const pA = store.selectSession('A')
+    const pB = store.selectSession('B')
+
+    // B 先返回
+    resolveB([message('mb', 'B')])
+    await pB
+    // A 后返回（慢响应，应被丢弃）
+    resolveA([message('ma', 'A')])
+    await pA
+
+    expect(store.currentSessionId).toBe('B')
+    expect(store.messages).toHaveLength(1)
+    expect(store.messages[0]?.id).toBe('mb')
+  })
+
+  it('sendMessage 进行中切换会话，回复不追加到新会话', async () => {
+    let resolveSend!: (v: ChatResponse) => void
+    vi.mocked(api.sendMessage).mockImplementation(() => new Promise((r) => { resolveSend = r }))
+    vi.mocked(api.listMessages).mockResolvedValue([])
+
+    const store = useChatStore()
+    store.currentSessionId = 'A'
+    const pSend = store.sendMessage('查订单')
+
+    // 发送进行中切换到 B
+    await store.selectSession('B')
+
+    // A 的回复返回，不应进入 B 的消息列表
+    resolveSend({ reply: '已识别【order_query】', intent: 'order_query', slots: {}, session_id: 'A' })
+    await pSend
+
+    expect(store.currentSessionId).toBe('B')
     expect(store.messages).toHaveLength(0)
   })
 })
