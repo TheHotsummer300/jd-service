@@ -11,3 +11,7 @@ class NotFoundError(AppError):
 
 class AppValidationError(AppError):
     """输入校验失败。"""
+
+
+class LLMError(AppError):
+    """LLM 系统失败（超时 / 网络错误 / key 未配置等）统一异常。"""
