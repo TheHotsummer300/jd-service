@@ -43,6 +43,21 @@ from app.business.ecommerce.config import ecommerce_settings
 from app.llm.client import get_llm
 
 
+# 只读 Cypher 校验：拒绝写操作与过程调用，防止 LLM 生成的恶意语句被直接执行
+_FORBIDDEN_CYPHER = re.compile(
+    r"\b(DELETE|DETACH|CREATE|MERGE|SET|REMOVE|CALL|FOREACH|LOAD\s+CSV|DROP|ALTER)\b",
+    re.IGNORECASE,
+)
+
+# 入口节点标签白名单（与 optional_label 一致），防止 LLM 输出恶意标签拼入 Cypher
+_VALID_LABELS = {"SKU", "SPU", "Trademark", "Category1", "Category2", "Category3", "Attr"}
+
+
+def _is_readonly_cypher(cypher: str) -> bool:
+    """校验 Cypher 是否为只读查询（拒绝写操作与过程调用）。"""
+    return _FORBIDDEN_CYPHER.search(cypher or "") is None
+
+
 # ---------------------------------------------------------------------------
 # SearchResult —— GraphRAG 检索结果
 # ---------------------------------------------------------------------------
@@ -399,7 +414,7 @@ class GraphRAG:
             json_str = self._extract_json_from_text(llm_output.content)
             outputs = self._parse_route_json(json_str)
 
-        logger.info(f"入口节点标签与实体: {outputs}")
+        logger.debug(f"入口节点标签与实体: {outputs}")
         return outputs
 
     # ------------------------------------------------------------------
@@ -414,7 +429,7 @@ class GraphRAG:
         """
         pairs: list[tuple[str, str]] = []
         for item in route_res:
-            if item.entity:
+            if item.entity and item.label in _VALID_LABELS:
                 pairs.append((item.label, item.entity))
 
         if not pairs:
@@ -434,8 +449,10 @@ class GraphRAG:
             ])
             for entity in entities
         ]
-        # 对实体进行向量化
-        query_vectors = self.embeddings.embed_documents(entities)
+        # 对实体进行向量化（DashScope 同步调用，转线程池避免阻塞事件循环）
+        query_vectors = await asyncio.to_thread(
+            self.embeddings.embed_documents, entities
+        )
 
         # 为每个标签创建混合检索任务（带降级处理）
         tasks = []
@@ -449,11 +466,10 @@ class GraphRAG:
         results = await asyncio.gather(*tasks)
 
         for (label, _), result in zip(pairs, results):
-            key_name = f"{label.lower()}_name" if label != "Attr" else f"{label.lower()}_value"
             for item in result:
                 retrieved_nodes.setdefault(label, []).append(item)
 
-        logger.info(f"入口节点: {retrieved_nodes}")
+        logger.debug(f"入口节点: {retrieved_nodes}")
         return retrieved_nodes
 
     async def _hybrid_retrieve_or_fallback(
@@ -504,6 +520,11 @@ class GraphRAG:
         """
         assert self.driver is not None
 
+        # 白名单校验标签，防止 LLM 控制的 label 拼入 Cypher 造成注入
+        if label not in _VALID_LABELS:
+            logger.warning(f"非法节点标签，拒绝文本检索: {label}")
+            return []
+
         # 将 OR 形式的全文查询转为实体列表
         search_terms = [term.strip() for term in query_text.split(" OR ") if term.strip()]
         if not search_terms:
@@ -528,7 +549,9 @@ class GraphRAG:
                 LIMIT $limit
             """
 
-            records = self.driver.execute_query(cypher, params).records
+            records = (
+                await asyncio.to_thread(self.driver.execute_query, cypher, params)
+            ).records
             return [
                 {key_name: record[key_name], "score": 0.5}
                 for record in records
@@ -551,7 +574,7 @@ class GraphRAG:
         llm_output = await self.llm.ainvoke(prompt)
         cypher = extract_cypher(llm_output.content)
 
-        logger.info(f"Cypher生成: {cypher}")
+        logger.debug(f"Cypher生成: {cypher}")
         return cypher
 
     # ------------------------------------------------------------------
@@ -565,10 +588,10 @@ class GraphRAG:
 
         errors: list[str] = []
 
-        # 1、验证 Cypher 语法
+        # 1、验证 Cypher 语法（同步执行转线程池）
         try:
             assert self.driver is not None
-            self.driver.execute_query(f"explain {cypher}")
+            await asyncio.to_thread(self.driver.execute_query, f"explain {cypher}")
         except CypherSyntaxError as e:
             errors.append(str(e))
 
@@ -662,7 +685,7 @@ class GraphRAG:
         else:
             return "知识库"
 
-    def _fallback_search_sku_text(
+    async def _fallback_search_sku_text(
         self,
         query: str,
         entry_nodes: dict[str, list],
@@ -690,27 +713,30 @@ class GraphRAG:
 
         try:
             assert self.driver is not None
-            records = self.driver.execute_query(
-                """
-                MATCH (sku:SKU)-[:Belong]->(spu:SPU)
-                WHERE spu.spu_name IN $spu_names
-                  AND (
-                    size($keywords) = 0
-                    OR any(keyword IN $keywords WHERE
-                        toLower(sku.sku_name) CONTAINS toLower(keyword)
-                        OR toLower(coalesce(sku.fulltext, "")) CONTAINS toLower(keyword)
-                    )
-                  )
-                RETURN sku.sku_name AS sku_name,
-                       spu.spu_name AS spu_name,
-                       sku.fulltext AS sku_fulltext
-                LIMIT $limit
-                """,
-                {
-                    "spu_names": spu_names,
-                    "keywords": keywords,
-                    "limit": top_k,
-                },
+            records = (
+                await asyncio.to_thread(
+                    self.driver.execute_query,
+                    """
+                    MATCH (sku:SKU)-[:Belong]->(spu:SPU)
+                    WHERE spu.spu_name IN $spu_names
+                      AND (
+                        size($keywords) = 0
+                        OR any(keyword IN $keywords WHERE
+                            toLower(sku.sku_name) CONTAINS toLower(keyword)
+                            OR toLower(coalesce(sku.fulltext, "")) CONTAINS toLower(keyword)
+                        )
+                      )
+                    RETURN sku.sku_name AS sku_name,
+                           spu.spu_name AS spu_name,
+                           sku.fulltext AS sku_fulltext
+                    LIMIT $limit
+                    """,
+                    {
+                        "spu_names": spu_names,
+                        "keywords": keywords,
+                        "limit": top_k,
+                    },
+                )
             ).records
         except Exception as e:
             logger.warning(f"SKU文本兜底检索异常: {e}")
@@ -725,7 +751,7 @@ class GraphRAG:
                 score=0.8,
             ))
         if results:
-            logger.info(f"SKU文本兜底检索结果: {results}")
+            logger.debug(f"SKU文本兜底检索结果: {results}")
         return results
 
     # ------------------------------------------------------------------
@@ -769,32 +795,35 @@ class GraphRAG:
         corrected = self.cypher_corrector(cypher)
         if corrected and corrected.strip():
             cypher = corrected
-        logger.info(f"Cypher校正: {cypher}")
+        logger.debug(f"Cypher校正: {cypher}")
 
-        # 7、执行 Cypher 语句
+        # 7、执行 Cypher 语句（只读校验：拒绝 LLM 生成的写操作/过程调用）
         results: list[SearchResult] = []
-        try:
-            assert self.driver is not None
-            records = self.driver.execute_query(cypher).records
-            for rec in records:
-                record_dict = dict(rec)
-                text = self._format_record_as_text(record_dict)
-                source = self._determine_source(record_dict)
-                results.append(SearchResult(
-                    text=text,
-                    metadata={"source": source, "raw_data": record_dict},
-                    score=1.0,
-                ))
-        except Exception as e:
-            logger.warning(f"执行Cypher语句异常: {e}")
+        if not _is_readonly_cypher(cypher):
+            logger.warning(f"拦截非只读 Cypher，拒绝执行: {cypher[:200]}")
+        else:
+            try:
+                assert self.driver is not None
+                records = (await asyncio.to_thread(self.driver.execute_query, cypher)).records
+                for rec in records:
+                    record_dict = dict(rec)
+                    text = self._format_record_as_text(record_dict)
+                    source = self._determine_source(record_dict)
+                    results.append(SearchResult(
+                        text=text,
+                        metadata={"source": source, "raw_data": record_dict},
+                        score=1.0,
+                    ))
+            except Exception as e:
+                logger.warning(f"执行Cypher语句异常: {e}")
 
         # SKU 文本兜底检索（Cypher 无结果时）
         if not results:
-            fallback_results = self._fallback_search_sku_text(query, entry_nodes, top_k)
+            fallback_results = await self._fallback_search_sku_text(query, entry_nodes, top_k)
             if fallback_results:
                 results = fallback_results
 
-        logger.info(f"检索结果: {results}")
+        logger.debug(f"检索结果: {results}")
         return results
 
     # ------------------------------------------------------------------
