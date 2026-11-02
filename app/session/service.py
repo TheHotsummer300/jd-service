@@ -8,6 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.session.models import ChatSession, Message
 
 
+def session_title_from_content(content: str, max_length: int = 20) -> str:
+    """从首条用户消息截取会话标题：合并空白、去除首尾，超长加省略号。"""
+    text = " ".join((content or "").split())
+    if not text:
+        return "新会话"
+    if len(text) <= max_length:
+        return text
+    return text[:max_length] + "…"
+
+
 class SessionService:
     """会话与消息的持久化服务，方法均为异步。"""
 
@@ -85,4 +95,12 @@ class SessionService:
         if chat_session is None:
             return
         chat_session.dialog_state = state
+        await self._session.commit()
+
+    async def update_title(self, session_id: uuid.UUID, title: str) -> None:
+        """更新会话标题并提交。"""
+        chat_session = await self._session.get(ChatSession, session_id)
+        if chat_session is None:
+            return
+        chat_session.title = title
         await self._session.commit()
