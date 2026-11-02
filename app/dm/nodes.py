@@ -121,15 +121,18 @@ async def business_node(state: DialogState) -> dict:
     handler = get_handler(active_intent)
     if handler is None:
         return {}
-    business_result = await handler(active_intent, slots)
+    business_result = await handler(active_intent, slots, state.get("user_message"))
     return {"business_result": business_result}
 
 
 def response_node(state: DialogState) -> dict:
-    """business_result 非空时渲染业务结果模板。"""
+    """business_result 非空时渲染业务结果模板；含 reply 时直接透传。"""
     business_result = state.get("business_result")
     if not business_result:
         return {}
+    reply = business_result.get("reply")
+    if reply:
+        return {"response": reply}
     response = TemplateEngine().render("business_placeholder.j2", business_result)
     return {"response": response}
 

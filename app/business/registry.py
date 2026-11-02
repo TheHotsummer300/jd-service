@@ -7,8 +7,9 @@ from typing import Any, Callable
 
 from pydantic import BaseModel
 
-# handler 约定签名：async def handle(intent, slots) -> dict
-Handler = Callable[[str, dict[str, Any]], Any]
+# handler 约定签名：async def handle(intent, slots, user_message=None) -> dict
+# user_message 为可选第三参，供 product_inquiry 等意图取回用户原始提问做 NLG。
+Handler = Callable[..., Any]
 
 
 class SlotSpec(BaseModel):
