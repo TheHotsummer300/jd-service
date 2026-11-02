@@ -12,7 +12,7 @@ from app.core.exceptions import LLMError, NotFoundError
 from app.dm.graph import build_graph
 from app.dm.state import dump_state, load_state
 from app.session.schemas import MessageOut
-from app.session.service import SessionService
+from app.session.service import SessionService, session_title_from_content
 
 router = APIRouter()
 
@@ -32,6 +32,9 @@ async def chat(session_id: uuid.UUID, body: MessageCreate) -> ApiResponse[ChatRe
         persisted = await service.load_dialog_state(session_id)
         user_id = chat_session.user_id
 
+    # 首条用户消息对应的会话标题（提前算好，供 3a/3b 复用）
+    title = session_title_from_content(body.content)
+
     # 2. 运行对话图（LLM 调用期间不持有 DB 会话/事务）
     state = load_state(
         persisted,
@@ -48,6 +51,8 @@ async def chat(session_id: uuid.UUID, body: MessageCreate) -> ApiResponse[ChatRe
         async with factory() as session:
             service = SessionService(session)
             await service.add_message(session_id, "user", body.content)
+            if not history:
+                await service.update_title(session_id, title)
         raise
 
     reply = result_state["response"]
@@ -62,6 +67,9 @@ async def chat(session_id: uuid.UUID, body: MessageCreate) -> ApiResponse[ChatRe
             session_id, "assistant", reply, intent=intent, slots=slots
         )
         await service.save_dialog_state(session_id, dump_state(result_state))
+        # 首条用户消息：用消息内容更新会话标题，方便客户在列表中识别历史对话
+        if not history:
+            await service.update_title(session_id, title)
 
     return ApiResponse(
         success=True,
