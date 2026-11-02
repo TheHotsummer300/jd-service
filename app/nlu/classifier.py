@@ -29,9 +29,12 @@ class IntentClassifier:
         filled_slots: dict[str, Any],
         history: list[Any],
         candidates: list[str],
+        intent_descriptions: dict[str, str] | None = None,
     ) -> NLUResult:
         """分类用户消息，返回意图与槽位。非候选意图或失败兜底 unknown。"""
-        prompt = self._build_prompt(text, active_intent, filled_slots, history, candidates)
+        prompt = self._build_prompt(
+            text, active_intent, filled_slots, history, candidates, intent_descriptions
+        )
 
         decision = await self._call_structured(prompt)
         if decision is None:
@@ -49,14 +52,24 @@ class IntentClassifier:
         filled_slots: dict[str, Any],
         history: list[Any],
         candidates: list[str],
+        intent_descriptions: dict[str, str] | None = None,
     ) -> str:
-        """拼接分类 prompt：用户消息 + 当前意图 + 已填槽位 + 历史 + 候选意图。"""
+        """拼接分类 prompt：用户消息 + 当前意图 + 已填槽位 + 历史 + 候选意图。
+
+        候选意图附带中文描述（若提供），避免 LLM 仅凭英文意图名误判，
+        例如把商品咨询判为订单查询。
+        """
         history_text = "\n".join(
             f"{msg.role}: {msg.content}" for msg in history if hasattr(msg, "role")
         )
+        descriptions = intent_descriptions or {}
+        candidate_text = "、".join(
+            f"{name}（{descriptions[name]}）" if descriptions.get(name) else name
+            for name in candidates
+        )
         return (
             "你是电商智能客服的意图识别器。请判断用户消息的意图并抽取槽位。\n"
-            f"候选意图：{', '.join(candidates)}\n"
+            f"候选意图：{candidate_text}\n"
             f"当前进行中的意图：{active_intent or '无'}\n"
             f"已填槽位：{json.dumps(filled_slots, ensure_ascii=False)}\n"
             f"最近历史：\n{history_text}\n"

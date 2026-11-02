@@ -9,7 +9,7 @@ from app.llm.client import get_chat_model
 from app.nlg.llm_generator import LLMGenerator
 from app.nlg.template_engine import TemplateEngine
 from app.nlu.classifier import IntentClassifier
-from app.nlu.platform_intents import PLATFORM_INTENTS
+from app.nlu.platform_intents import PLATFORM_INTENT_DESCRIPTIONS, PLATFORM_INTENTS
 
 
 def entry_node(state: DialogState) -> dict:
@@ -35,6 +35,11 @@ async def nlu_node(state: DialogState) -> dict:
     intents = dict(state.get("intents") or {})
 
     candidates = list(PLATFORM_INTENTS) + list(list_specs().keys())
+    # 候选意图的中文描述，帮助分类器区分语义（如「订单查询」vs「商品咨询」）
+    intent_descriptions = {
+        spec.name: spec.description for spec in list_specs().values()
+    }
+    intent_descriptions.update(PLATFORM_INTENT_DESCRIPTIONS)
     classifier = IntentClassifier(get_chat_model())
     nlu_result = await classifier.classify(
         text=user_message,
@@ -42,6 +47,7 @@ async def nlu_node(state: DialogState) -> dict:
         filled_slots=slots,
         history=history,
         candidates=candidates,
+        intent_descriptions=intent_descriptions,
     )
 
     slots = merge_slots(slots, nlu_result.slots)

@@ -28,7 +28,13 @@ def _patch_classifier(monkeypatch, nlu_result: NLUResult) -> None:
     """将 IntentClassifier.classify 替换为固定返回 nlu_result 的实现。"""
 
     async def fake_classify(
-        self, text, active_intent, filled_slots, history, candidates
+        self,
+        text,
+        active_intent,
+        filled_slots,
+        history,
+        candidates,
+        intent_descriptions=None,
     ):
         return nlu_result
 
@@ -83,3 +89,33 @@ async def test_slot_filling_preserves_active_intent_across_turns(monkeypatch):
 
     assert second["active_intent"] == "postsale_return"
     assert second["slots"]["order_id"] == "A100"
+
+
+async def test_nlu_node_passes_intent_descriptions(monkeypatch):
+    """nlu_node 应将意图中文描述传给分类器，避免仅凭英文名误判。"""
+    captured = {}
+
+    async def fake_classify(
+        self,
+        text,
+        active_intent,
+        filled_slots,
+        history,
+        candidates,
+        intent_descriptions=None,
+    ):
+        captured["descriptions"] = intent_descriptions
+        return NLUResult(
+            intent="product_inquiry",
+            slots={"product_name": "iPhone16"},
+            confidence=1.0,
+        )
+
+    monkeypatch.setattr(IntentClassifier, "classify", fake_classify)
+    monkeypatch.setattr("app.dm.nodes.get_chat_model", lambda: object())
+
+    await build_graph().ainvoke(_initial_state())
+
+    assert captured["descriptions"]["product_inquiry"] == "商品咨询"
+    assert captured["descriptions"]["order_query"] == "订单查询"
+    assert captured["descriptions"]["unknown"] == "无法识别意图"

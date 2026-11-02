@@ -67,3 +67,37 @@ async def test_classify_passes_through_llm_error(monkeypatch):
             history=[],
             candidates=["unknown", "transfer_human", "order_query"],
         )
+
+
+async def test_prompt_includes_intent_descriptions(monkeypatch):
+    """候选意图应附带中文描述，帮助 LLM 区分 order_query 与 product_inquiry。"""
+    captured = {}
+
+    class _CapturingStructured:
+        async def ainvoke(self, prompt):
+            captured["prompt"] = prompt
+            return IntentDecision(intent="product_inquiry", slots={})
+
+    model = _FakeModel()
+    classifier = IntentClassifier(model)
+    monkeypatch.setattr(
+        model, "with_structured_output", lambda schema: _CapturingStructured()
+    )
+
+    await classifier.classify(
+        "iPhone16支不支持双卡双待",
+        active_intent=None,
+        filled_slots={},
+        history=[],
+        candidates=["unknown", "transfer_human", "order_query", "product_inquiry"],
+        intent_descriptions={
+            "unknown": "无法识别",
+            "transfer_human": "转人工客服",
+            "order_query": "订单查询",
+            "product_inquiry": "商品咨询",
+        },
+    )
+
+    assert "order_query" in captured["prompt"]
+    assert "订单查询" in captured["prompt"]
+    assert "商品咨询" in captured["prompt"]
