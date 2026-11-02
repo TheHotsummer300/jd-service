@@ -9,8 +9,8 @@ from app.core.exceptions import LLMError
 _PLACEHOLDER_API_KEY = "sk-your-api-key"
 
 
-def get_chat_model() -> ChatOpenAI:
-    """构建 ChatOpenAI 实例，key 缺失或为占位值时抛 LLMError。"""
+def get_llm(temperature: float = 0.0) -> ChatOpenAI:
+    """构建 ChatOpenAI 实例，支持自定义 temperature；key 缺失或为占位值时抛 LLMError。"""
     settings = Settings()
     if not settings.llm_api_key or settings.llm_api_key == _PLACEHOLDER_API_KEY:
         raise LLMError("LLM API key 未配置")
@@ -19,8 +19,13 @@ def get_chat_model() -> ChatOpenAI:
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
-        temperature=0,
+        temperature=temperature,
     )
+
+
+def get_chat_model() -> ChatOpenAI:
+    """构建 ChatOpenAI 实例（temperature=0，用于需要确定性输出的场景）。"""
+    return get_llm(temperature=0)
 
 
 async def generate_text(prompt: str) -> str:
