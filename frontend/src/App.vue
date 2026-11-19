@@ -1,13 +1,25 @@
-<script setup lang="ts">
-import ChatView from './components/ChatView.vue'
-import UserEntryView from './components/UserEntryView.vue'
-import { useChatStore } from './stores/chat'
+<template>
+  <router-view />
+</template>
 
-const chatStore = useChatStore()
+<script setup lang="ts">
 </script>
 
-<template>
-  <!-- 未输入用户 ID 时显示登录视图，否则进入聊天界面 -->
-  <UserEntryView v-if="!chatStore.userId" />
-  <ChatView v-else />
-</template>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+}
+</style>

@@ -1,84 +1,132 @@
-<script setup lang="ts">
-import { useChatStore } from '../stores/chat'
-
-const chatStore = useChatStore()
-
-/** 新建会话（失败静默，v1 不做复杂提示）。 */
-async function handleCreate(): Promise<void> {
-  try {
-    await chatStore.createSession()
-  } catch {
-    /* v1 忽略错误提示 */
-  }
-}
-
-/** 选中会话（失败静默）。 */
-async function handleSelect(id: string): Promise<void> {
-  try {
-    await chatStore.selectSession(id)
-  } catch {
-    /* v1 忽略错误提示 */
-  }
-}
-</script>
-
 <template>
   <aside class="session-sidebar">
-    <button class="new-session" @click="handleCreate">新建会话</button>
-    <div v-if="chatStore.sessions.length === 0" class="empty">暂无会话，点击新建</div>
-    <ul v-else class="session-list">
-      <li
-        v-for="session in chatStore.sessions"
-        :key="session.id"
-        class="session-item"
-        :class="{ active: session.id === chatStore.currentSessionId }"
-        @click="handleSelect(session.id)"
+    <div class="sidebar-header">
+      <el-button
+        type="primary"
+        class="new-session-btn"
+        @click="handleCreateSession"
       >
-        {{ session.title }}
-      </li>
-    </ul>
+        <el-icon><Plus /></el-icon>
+        创建新会话
+      </el-button>
+    </div>
+
+    <div class="session-list">
+      <div
+        v-for="session in sessionStore.sessions"
+        :key="session.id"
+        :class="['session-item', { active: session.id === sessionStore.activeSessionId }]"
+        @click="handleSelectSession(session.id)"
+      >
+        <div class="session-title">
+          {{ session.title || '新会话' }}
+        </div>
+        <div class="session-time">
+          {{ formatTime(session.updated_at) }}
+        </div>
+      </div>
+
+      <el-empty
+        v-if="sessionStore.sessions.length === 0"
+        description="暂无会话"
+        :image-size="60"
+      />
+    </div>
   </aside>
 </template>
 
-<style scoped>
+<script setup lang="ts">
+import { Plus } from '@element-plus/icons-vue'
+import { useSessionStore } from '@/stores/session'
+import { useChatStore } from '@/stores/chat'
+
+const sessionStore = useSessionStore()
+const chatStore = useChatStore()
+
+/** 创建新会话 */
+async function handleCreateSession() {
+  await sessionStore.createNewSession()
+  if (sessionStore.activeSessionId) {
+    await chatStore.loadMessages(sessionStore.activeSessionId)
+  }
+}
+
+/** 选择会话 */
+async function handleSelectSession(sessionId: string) {
+  sessionStore.setActiveSession(sessionId)
+  await chatStore.loadMessages(sessionId)
+}
+
+/** 格式化时间 */
+function formatTime(iso: string): string {
+  const date = new Date(iso)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  if (hours < 24) return `${hours} 小时前`
+  if (days < 7) return `${days} 天前`
+  return date.toLocaleDateString('zh-CN')
+}
+</script>
+
+<style scoped lang="scss">
 .session-sidebar {
   width: 280px;
-  flex-shrink: 0;
+  min-width: 280px;
+  height: 100vh;
+  background: #f5f7fa;
+  border-right: 1px solid #e4e7ed;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #eee;
-  overflow-y: auto;
 }
 
-.new-session {
-  margin: 12px;
-  padding: 8px 12px;
-  cursor: pointer;
-}
-
-.empty {
+.sidebar-header {
   padding: 16px;
-  color: #999;
-  text-align: center;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.new-session-btn {
+  width: 100%;
 }
 
 .session-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
 }
 
 .session-item {
   padding: 12px 16px;
+  border-radius: 8px;
   cursor: pointer;
-  border-bottom: 1px solid #f5f5f5;
+  margin-bottom: 4px;
+  transition: background 0.2s;
+
+  &:hover {
+    background: #e8ecf1;
+  }
+
+  &.active {
+    background: #d9e1f2;
+  }
 }
 
-.session-item:hover {
-  background: #fafafa;
+.session-title {
+  font-size: 14px;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
 }
 
-.session-item.active {
-  background: #eef4ff;
+.session-time {
+  font-size: 12px;
+  color: #909399;
 }
 </style>

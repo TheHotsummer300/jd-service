@@ -4,17 +4,17 @@
 
 ## 技术栈与工具
 
-| 方面 | 选择 |
-|---------|--------|
-| Python | 3.14+，使用 **uv** 进行包管理和虚拟环境 |
-| Web 框架 | FastAPI (异步) |
-| 对话管理 | LangGraph StateGraph |
-| 数据库 | MySQL 8.0，SQLAlchemy 2.x 异步 + Alembic 迁移 |
+| 方面       | 选择                                              |
+| ---------- | ------------------------------------------------- |
+| Python     | 3.14+，使用 **uv** 进行包管理和虚拟环境     |
+| Web 框架   | FastAPI (异步)                                    |
+| 对话管理   | LangGraph StateGraph                              |
+| 数据库     | MySQL 8.0，SQLAlchemy 2.x 异步 + Alembic 迁移     |
 | LLM 提供者 | langchain-openai (ChatOpenAI)，通过 `.env` 配置 |
-| 配置 | pydantic-settings，从 `.env` 读取 |
-| 日志 | loguru |
-| 测试 | pytest + pytest-asyncio + httpx |
-| 容器 | Docker Compose (MySQL + Neo4j) |
+| 配置       | pydantic-settings，从 `.env` 读取               |
+| 日志       | loguru                                            |
+| 测试       | pytest + pytest-asyncio + httpx                   |
+| 容器       | Docker Compose (MySQL + Neo4j)                    |
 
 ## 常用命令
 
@@ -73,23 +73,23 @@ uv run uvicorn app.main:app --reload       # 开发服务器
 通道层 (REST / WebSocket) → NLU 层 → DM 层 (LangGraph) → 业务层 → NLG 层 → 会话层
 ```
 
-| 层 | 位置 | 职责 |
-|-------|----------|------------|
-| **通道层** | `app/api/` | REST + WebSocket 端点。无业务逻辑。 |
-| **NLU 层** | `app/nlu/` | 意图分类 + 槽位提取，由 LLM 驱动。输出标准化的 `NLUResult`。 |
-| **DM 层** | `app/dm/` | LangGraph StateGraph：对话状态流转、条件路由、意图管理。具有 entry、nlu、slot_filling、business、response 和 fallback 节点的有状态图。 |
-| **业务层** | `app/business/` | 意图处理器和槽位补充提供者。唯一可替换的层——业务线在此实现。 |
-| **NLG 层** | `app/nlg/` | 混合策略：Jinja2 模板用于精确的业务结果，LLM 用于闲聊/兜底。 |
-| **会话层** | `app/session/` | 会话/消息 ORM 模型和 CRUD 服务，持久化到 `ecs_platform`。 |
+| 层               | 位置              | 职责                                                                                                                                   |
+| ---------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **通道层** | `app/api/`      | REST + WebSocket 端点。无业务逻辑。                                                                                                    |
+| **NLU 层** | `app/nlu/`      | 意图分类 + 槽位提取，由 LLM 驱动。输出标准化的 `NLUResult`。                                                                         |
+| **DM 层**  | `app/dm/`       | LangGraph StateGraph：对话状态流转、条件路由、意图管理。具有 entry、nlu、slot_filling、business、response 和 fallback 节点的有状态图。 |
+| **业务层** | `app/business/` | 意图处理器和槽位补充提供者。唯一可替换的层——业务线在此实现。                                                                         |
+| **NLG 层** | `app/nlg/`      | 混合策略：Jinja2 模板用于精确的业务结果，LLM 用于闲聊/兜底。                                                                           |
+| **会话层** | `app/session/`  | 会话/消息 ORM 模型和 CRUD 服务，持久化到 `ecs_platform`。                                                                            |
 
 层间通信通过 Pydantic 模型强制执行。不绕过层边界。
 
 ## 双数据库分离
 
-| 数据库 | 用途 | 配置 |
-|----------|------|-------------|
-| `ecs_platform` | 对话会话、消息历史、槽位快照 | `app/core/database.py` → `PLATFORM_DATABASE_URL`，通过 Alembic 管理 |
-| `ecs` | 电商业务数据（订单、物流、售后等） | `business/ecommerce/config.py` → `ECO_DATABASE_URL`，业务线自管 |
+| 数据库           | 用途                               | 配置                                                                     |
+| ---------------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| `ecs_platform` | 对话会话、消息历史、槽位快照       | `app/core/database.py` → `PLATFORM_DATABASE_URL`，通过 Alembic 管理 |
+| `ecs`          | 电商业务数据（订单、物流、售后等） | `business/ecommerce/config.py` → `ECO_DATABASE_URL`，业务线自管     |
 
 平台永远不感知业务数据库。每个业务线提供自己的数据库配置。
 
@@ -104,11 +104,11 @@ uv run uvicorn app.main:app --reload       # 开发服务器
 
 ## NLG 策略
 
-| 场景 | 策略 | 原因 |
-|----------|----------|--------|
-| 业务操作结果（金额、ID） | `TemplateEngine` (Jinja2) | 必须精确，不允许幻觉 |
-| 带选择列表的槽位追问 | `TemplateEngine` | 格式固定 |
-| 闲聊 / 兜底回复 / unknown | `LLMGenerator` | 需要自然灵活 |
+| 场景                      | 策略                        | 原因                 |
+| ------------------------- | --------------------------- | -------------------- |
+| 业务操作结果（金额、ID）  | `TemplateEngine` (Jinja2) | 必须精确，不允许幻觉 |
+| 带选择列表的槽位追问      | `TemplateEngine`          | 格式固定             |
+| 闲聊 / 兜底回复 / unknown | `LLMGenerator`            | 需要自然灵活         |
 
 ## 项目结构（规划的）
 

@@ -1,36 +1,35 @@
-"""LLM 调用封装：构建 ChatOpenAI 与文本生成。"""
+"""LLM 客户端封装 — ChatOpenAI 单例工厂"""
 from langchain_openai import ChatOpenAI
-from loguru import logger
 
-from app.config import Settings
-from app.core.exceptions import LLMError
+from app.config import settings
 
-# 占位 key，视为未配置
-_PLACEHOLDER_API_KEY = "sk-your-api-key"
+_llm_instance: ChatOpenAI | None = None
 
 
-def get_chat_model() -> ChatOpenAI:
-    """构建 ChatOpenAI 实例，key 缺失或为占位值时抛 LLMError。"""
-    settings = Settings()
-    if not settings.llm_api_key or settings.llm_api_key == _PLACEHOLDER_API_KEY:
-        raise LLMError("LLM API key 未配置")
+def get_llm(temperature: float = 0.1) -> ChatOpenAI:
+    """获取 ChatOpenAI 实例（单例模式）
 
-    return ChatOpenAI(
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        temperature=0,
-    )
+    首次调用时根据配置创建实例，后续调用返回同一实例。
+    如需不同 temperature，请先调用 reset_llm() 或直接传入 temperature 参数。
+
+    Args:
+        temperature: LLM 温度参数，控制回复的随机性（0-2）
+
+    Returns:
+        ChatOpenAI: 全局共享的 LLM 客户端实例
+    """
+    global _llm_instance
+    if _llm_instance is None:
+        _llm_instance = ChatOpenAI(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            temperature=temperature,
+        )
+    return _llm_instance
 
 
-async def generate_text(prompt: str) -> str:
-    """调用模型生成文本，失败时记录日志并统一转 LLMError。"""
-    try:
-        model = get_chat_model()
-        result = await model.ainvoke(prompt)
-        return result.content
-    except LLMError:
-        raise
-    except Exception as exc:
-        logger.error("LLM 调用失败: {}", exc)
-        raise LLMError("LLM 调用失败") from exc
+def reset_llm() -> None:
+    """重置 LLM 单例（主要用于测试）"""
+    global _llm_instance
+    _llm_instance = None

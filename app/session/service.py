@@ -1,88 +1,133 @@
-"""会话层 CRUD 服务：会话 / 消息持久化与 dialog_state 读写。"""
+"""会话层 CRUD 服务"""
 import uuid
-from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from loguru import logger
 
-from app.session.models import ChatSession, Message
+from app.session.models import Session, Message
 
 
 class SessionService:
-    """会话与消息的持久化服务，方法均为异步。"""
+    """会话管理服务"""
 
-    def __init__(self, session: AsyncSession):
-        self._session = session
+    @staticmethod
+    async def create_session(db: AsyncSession, user_id: str) -> Session:
+        """创建新会话"""
+        session = Session(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            status="active",
+        )
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        logger.info(f"创建会话: {session.id}, 用户: {user_id}")
+        return session
 
-    async def create_session(self, user_id: str) -> ChatSession:
-        """创建会话并提交。"""
-        chat_session = ChatSession(user_id=user_id, updated_at=datetime.now())
-        self._session.add(chat_session)
-        await self._session.commit()
-        await self._session.refresh(chat_session)
-        return chat_session
-
-    async def list_sessions(self, user_id: str) -> list[ChatSession]:
-        """按 updated_at 倒序返回用户会话列表。"""
-        result = await self._session.execute(
-            select(ChatSession)
-            .where(ChatSession.user_id == user_id)
-            .order_by(ChatSession.updated_at.desc())
+    @staticmethod
+    async def list_sessions(
+        db: AsyncSession, user_id: str, limit: int = 10
+    ) -> list[Session]:
+        """获取用户最近会话列表，按更新时间倒序"""
+        result = await db.execute(
+            select(Session)
+            .where(Session.user_id == user_id)
+            .order_by(Session.updated_at.desc())
+            .limit(limit)
         )
         return list(result.scalars().all())
 
-    async def get_session(self, session_id: uuid.UUID) -> ChatSession | None:
-        """按主键查询会话，不存在返回 None。"""
-        return await self._session.get(ChatSession, session_id)
-
-    async def list_messages(self, session_id: uuid.UUID) -> list[Message]:
-        """按 created_at 正序返回会话消息列表。"""
-        result = await self._session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .order_by(Message.created_at.asc())
+    @staticmethod
+    async def get_session(
+        db: AsyncSession, session_id: str
+    ) -> Session | None:
+        """获取单个会话"""
+        result = await db.execute(
+            select(Session).where(Session.id == session_id)
         )
-        return list(result.scalars().all())
+        return result.scalar_one_or_none()
 
+    @staticmethod
+    async def update_session_title(
+        db: AsyncSession, session_id: str, title: str
+    ) -> None:
+        """更新会话标题"""
+        await db.execute(
+            update(Session)
+            .where(Session.id == session_id)
+            .values(title=title)
+        )
+        await db.commit()
+
+    @staticmethod
+    async def save_intents_snapshot(
+        db: AsyncSession, session_id: str, intents: dict
+    ) -> None:
+        """保存意图容器快照到 Session.intents_json"""
+        from app.dm.intent_controller import IntentController
+        snapshot = IntentController.to_snapshot(intents)
+        await db.execute(
+            update(Session)
+            .where(Session.id == session_id)
+            .values(intents_json=snapshot)
+        )
+        await db.commit()
+
+    @staticmethod
+    async def load_intents_snapshot(
+        db: AsyncSession, session_id: str
+    ) -> dict | None:
+        """从 Session.intents_json 加载意图容器快照"""
+        from app.dm.intent_controller import IntentController
+        session = await SessionService.get_session(db, session_id)
+        if session and session.intents_json:
+            return IntentController.from_snapshot(session.intents_json)
+        return None
+
+
+class MessageService:
+    """消息管理服务"""
+
+    @staticmethod
     async def add_message(
-        self,
-        session_id: uuid.UUID,
+        db: AsyncSession,
+        session_id: str,
         role: str,
         content: str,
         intent: str | None = None,
         slots: dict | None = None,
+        business_data: dict | None = None,
     ) -> Message:
-        """新增消息并刷新所属会话的 updated_at。"""
+        """添加消息"""
         message = Message(
             session_id=session_id,
             role=role,
             content=content,
             intent=intent,
-            slots=slots,
+            slots_json=slots,
+            business_data_json=business_data,
         )
-        self._session.add(message)
-        await self._session.flush()
-
-        chat_session = await self._session.get(ChatSession, session_id)
-        if chat_session is not None:
-            # 显式更新，触发 onupdate 使会话排序前移（微秒精度，避免 SQLite 秒级精度下不变化）
-            chat_session.updated_at = datetime.now()
-
-        await self._session.commit()
-        await self._session.refresh(message)
+        db.add(message)
+        # 同时更新会话的 updated_at
+        await db.execute(
+            update(Session)
+            .where(Session.id == session_id)
+            .values(updated_at=func.now())
+        )
+        await db.commit()
+        await db.refresh(message)
+        logger.info(f"添加消息: session={session_id}, role={role}")
         return message
 
-    async def load_dialog_state(self, session_id: uuid.UUID) -> dict | None:
-        """读取会话的 dialog_state 原始 JSON，不存在返回 None。"""
-        chat_session = await self._session.get(ChatSession, session_id)
-        if chat_session is None:
-            return None
-        return chat_session.dialog_state
-
-    async def save_dialog_state(self, session_id: uuid.UUID, state: dict) -> None:
-        """写回 dialog_state 并提交。"""
-        chat_session = await self._session.get(ChatSession, session_id)
-        if chat_session is None:
-            return
-        chat_session.dialog_state = state
-        await self._session.commit()
+    @staticmethod
+    async def list_messages(
+        db: AsyncSession, session_id: str
+    ) -> list[Message]:
+        """获取会话消息列表，按时间正序"""
+        result = await db.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.created_at.asc())
+        )
+        return list(result.scalars().all())

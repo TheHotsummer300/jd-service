@@ -1,37 +1,63 @@
-"""会话层 ORM 模型：会话与消息，持久化到平台库 ecs_platform。"""
+"""会话层 ORM 模型"""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, Uuid, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
 
-class ChatSession(Base):
-    """对话会话，含多轮上下文快照（dialog_state）。"""
+class Session(Base):
+    """会话表"""
 
     __tablename__ = "sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[str] = mapped_column(String(64), index=True)
-    title: Mapped[str] = mapped_column(String(255), default="新会话")
-    dialog_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    id: Mapped[str] = mapped_column(
+        String(50), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(
+        Enum("active", "closed", name="session_status"),
+        nullable=False,
+        default="active",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+    intents_json: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True,
+        comment="会话意图状态快照: {intent_name: {status, slots, confidence, ...}}"
+    )
+
+    messages = relationship("Message", back_populates="session", lazy="selectin")
 
 
 class Message(Base):
-    """单条对话消息，role 取值 user/assistant（由应用层 Pydantic 校验）。"""
+    """消息表"""
 
     __tablename__ = "messages"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"))
-    role: Mapped[str] = mapped_column(String(16))
-    content: Mapped[str] = mapped_column(Text)
-    intent: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    slots: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String(50), ForeignKey("sessions.id"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(
+        Enum("user", "assistant", name="message_role"), nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    intent: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    slots_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    business_data_json: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True,
+        comment="业务结构化数据快照: ask_slot/options 等，前端据此恢复按钮"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+    session = relationship("Session", back_populates="messages")

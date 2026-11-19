@@ -26,7 +26,7 @@ services:
       start_period: 60s
   
   neo4j:
-    image: neo4j:5.26-community
+    image: xj28ssilcy33uuyw28.xuanyuan.run/library/neo4j:5.26-community
     container_name: ecs-neo4j
     restart: unless-stopped
     entrypoint: ["/init-entrypoint.sh"]

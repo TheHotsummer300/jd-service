@@ -1,20 +1,15 @@
-"""DM 层条件路由函数。"""
+"""DM 层条件路由
 
-from typing import Literal
-
-from app.dm.state import DialogState
-from app.nlu.platform_intents import PLATFORM_INTENTS
+提供给 LangGraph add_conditional_edges 使用的路由函数。
+"""
 
 
-def route_after_nlu(state: DialogState) -> Literal["fallback", "slot_filling"]:
-    """平台意图走 fallback，业务意图走槽位填充。"""
-    if state["active_intent"] in PLATFORM_INTENTS:
-        return "fallback"
-    return "slot_filling"
+def is_platform_intent(state: dict) -> bool:
+    """判断当前活跃意图是否为平台意图或空（兜底）
 
-
-def route_after_slot_filling(state: DialogState) -> Literal["business", "end"]:
-    """已生成追问则结束本轮；否则进入业务处理。"""
-    if state.get("response") is not None:
-        return "end"
-    return "business"
+    空 active_intent 表示无活跃意图，走 fallback 等 NLU 识别新意图。
+    """
+    active = state.get("active_intent", "")
+    if not active:
+        return True
+    return active in ("unknown", "transfer_human")
